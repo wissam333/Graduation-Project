@@ -1,0 +1,234 @@
+[
+    {
+      "name": "User",
+      "schema": {
+        "username": {
+          "type": "String",
+          "required": true,
+          "unique": true
+        },
+        "email": {
+          "type": "String",
+          "required": true,
+          "unique": true
+        },
+        "password": {
+          "type": "String",
+          "required": true
+        },
+        "role": {
+          "type": "String",
+          "default": "1"
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "SocialMedia",
+      "schema": {
+        "name": {
+          "type": "String",
+          "required": true
+        },
+        "link": {
+          "type": "String",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "MainSlider",
+      "schema": {
+        "img": {
+          "type": "String",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Restaurant",
+      "schema": {
+        "name": {
+          "type": "String",
+          "required": true,
+          "unique": true
+        },
+        "location": {
+          "type": "String",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Product",
+      "schema": {
+        "restaurantId": {
+          "type": "ObjectId",
+          "ref": "Restaurant",
+          "required": true
+        },
+        "title": {
+          "type": "String",
+          "required": true,
+          "unique": true
+        },
+        "desc": {
+          "type": "String",
+          "required": true
+        },
+        "img": {
+          "type": "String"
+        },
+        "categoryId": {
+          "type": "ObjectId",
+          "ref": "Category",
+          "required": true
+        },
+        "size": {
+          "type": ["String"]
+        },
+        "color": {
+          "type": ["String"]
+        },
+        "price": {
+          "type": "Number",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Order",
+      "schema": {
+        "userId": {
+          "type": "ObjectId",
+          "ref": "User"
+        },
+        "name": {
+          "type": "String",
+          "required": true
+        },
+        "email": {
+          "type": "String",
+          "required": true
+        },
+        "products": [
+          {
+            "productId": {
+              "type": "ObjectId",
+              "ref": "Product",
+              "required": true
+            },
+            "quantity": {
+              "type": "Number",
+              "default": 1,
+              "required": true
+            }
+          }
+        ],
+        "amount": {
+          "type": "Number",
+          "required": true,
+          "immutable": true
+        },
+        "address": {
+          "type": "Object",
+          "required": true
+        },
+        "status": {
+          "type": "String",
+          "default": "pending"
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Location",
+      "schema": {
+        "name": {
+          "type": "String",
+          "required": true
+        },
+        "price": {
+          "type": "Number",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Feedback",
+      "schema": {
+        "email": {
+          "type": "String",
+          "required": true
+        },
+        "name": {
+          "type": "String",
+          "required": true
+        },
+        "phone": {
+          "type": "String"
+        },
+        "message": {
+          "type": "String",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "Favorite",
+      "schema": {
+        "userId": {
+          "type": "ObjectId",
+          "ref": "User",
+          "required": true
+        },
+        "productsId": {
+          "type": ["ObjectId"],
+          "required": true
+        },
+        "timestamp": {
+          "type": "Date",
+          "default": "Date.now"
+        }
+      }
+    },
+    {
+      "name": "Category",
+      "schema": {
+        "name": {
+          "type": "String",
+          "required": true,
+          "unique": true
+        },
+        "img": {
+          "type": "String",
+          "required": true
+        }
+      },
+      "timestamps": true
+    },
+    {
+      "name": "AboutUs",
+      "schema": {
+        "title": {
+          "type": "String",
+          "required": true
+        },
+        "description": {
+          "type": "String",
+          "required": true
+        },
+        "image": {
+          "type": "String"
+        }
+      },
+      "timestamps": true
+    }
+  ]
+  

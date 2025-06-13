@@ -1,0 +1,10 @@
+package-lock.json
+node_modules/*
+
+.idea/*
+
+
+uploads/*
+!uploads/.gitkeep
+
+.env

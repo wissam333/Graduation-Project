@@ -1,0 +1,43 @@
+const mongoose = require("mongoose");
+
+const UserSchema = new mongoose.Schema(
+  {
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    password: {
+      type: String,
+      required: true,
+    },
+    role: {
+      type: String,
+      default: "1", // 0 admin , 1 user , 2 manager
+      enum: ["0", "1", "2"], // 0=admin, 1=user, 2=manager
+    },
+    managedRestaurants: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Restaurant",
+        validate: {
+          validator: async function (restaurantId) {
+            const restaurant = await mongoose
+              .model("Restaurant")
+              .findById(restaurantId);
+            return restaurant !== null;
+          },
+          message: "Restaurant does not exist",
+        },
+      },
+    ],
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model("User", UserSchema);
