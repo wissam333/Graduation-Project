@@ -3,6 +3,9 @@ node_modules/*
 
 .idea/*
 
+.env
 
 uploads/*
 !uploads/.gitkeep
+
+.history/
