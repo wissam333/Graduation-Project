@@ -1,4 +1,5 @@
 // basics
+require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const app = express();
@@ -6,6 +7,7 @@ app.use(express.json());
 const path = require("path");
 const cors = require("cors");
 const port = process.env.PORT || 5000;
+const DB_URI = process.env.DBString;
 
 // importing routes
 const userRoute = require("./routes/user");
@@ -20,7 +22,7 @@ const category = require("./routes/category");
 const settings = require("./routes/settings");
 
 mongoose
-  .connect("mongodb://0.0.0.0:27017/Restaurant", {})
+  .connect(DB_URI, {})
   .then((result) => {
     console.log("connected to database!!");
   })
@@ -50,6 +52,7 @@ app.use("/api/category", category);
 app.use("/api/settings", settings);
 
 // start server
-app.listen(port, () => {
-  console.log("server is runing on port 5000");
+app.listen(port, "0.0.0.0", () => {
+  // Listen on all network interfaces
+  console.log(`Server running on port ${port}`);
 });
