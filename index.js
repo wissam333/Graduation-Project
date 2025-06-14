@@ -22,7 +22,7 @@ const category = require("./routes/category");
 const settings = require("./routes/settings");
 
 mongoose
-  .connect(DB_URI + "/Restaurant", {})
+  .connect(DB_URI, {})
   .then((result) => {
     console.log("connected to database!!");
   })
