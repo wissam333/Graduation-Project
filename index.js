@@ -37,6 +37,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization", "token"],
   })
 );
+
 // static images
 app.use("/uploads", express.static(path.join(__dirname, "uploads"))); // Serve uploads directory statically
 // use routes
