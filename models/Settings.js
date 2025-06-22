@@ -7,7 +7,13 @@ const SettingsSchema = new mongoose.Schema(
       required: true,
       default: 1.5, // fallback if not set
     },
+    driverPercentage: {
+      type: Number,
+      required: true,
+      default: 20, // fallback if not set
+    },
   },
+
   { timestamps: true }
 );
 

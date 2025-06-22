@@ -196,4 +196,90 @@ const registerManager = async (req, res) => {
   }
 };
 
-module.exports = { register, login, registerManager };
+const registerDriver = async (req, res) => {
+  try {
+    const { username, email, password, restaurantId } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !password || !restaurantId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "All fields are required: username, email, password, restaurantId",
+      });
+    }
+
+    // Check if user exists
+    const userExists = await User.findOne({ $or: [{ username }, { email }] });
+    if (userExists) {
+      return res.status(409).json({
+        success: false,
+        message: "Username or email already exists",
+      });
+    }
+
+    // Find restaurant (without checking createdBy)
+    const restaurant = await Restaurant.findById(restaurantId).select(
+      "-createdBy"
+    );
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found",
+      });
+    }
+
+    // Create manager
+    const newManager = new User({
+      username,
+      email,
+      password: CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString(),
+      role: "3",
+      restaurantId,
+    });
+
+    const savedManager = await newManager.save();
+
+    // Update restaurant (without modifying createdBy)
+    await Restaurant.findByIdAndUpdate(
+      restaurantId,
+      { $addToSet: { managers: savedManager._id } },
+      { runValidators: false } // Skip validation to avoid createdBy requirement
+    );
+
+    // Generate token
+    const accessToken = jwt.sign(
+      {
+        id: savedManager._id,
+        role: savedManager.role,
+        restaurantId: savedManager.restaurantId,
+      },
+      process.env.JWT_SEC,
+      { expiresIn: "3d" }
+    );
+
+    // Return response
+    const { password: _, ...userData } = savedManager.toObject();
+
+    res.status(201).json({
+      success: true,
+      message: "Manager registered successfully",
+      data: {
+        user: userData,
+        accessToken,
+        restaurant: {
+          _id: restaurant._id,
+          name: restaurant.name,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to register manager",
+      error: err.message,
+    });
+  }
+};
+
+module.exports = { register, login, registerManager, registerDriver };

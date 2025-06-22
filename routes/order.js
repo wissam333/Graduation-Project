@@ -1,4 +1,3 @@
-//basics
 const router = require("express").Router();
 const {
   verifyTokenAndAdmin,
@@ -12,6 +11,9 @@ const {
   getOrderById,
   getAllOrders,
   generateInvoice,
+  assignDriverToOrder,
+  getDriverDues,
+  updateDriverDuesStatus,
 } = require("../controllers/orderController");
 
 // Add Order
@@ -23,15 +25,22 @@ router.put("/:id", updateOrder);
 // Delete Order
 router.delete("/:id", deleteOrder);
 
-// Get Order by ID
-router.get("/:id", getOrderById);
+// Get Driver Dues - MOVED ABOVE PARAMETERIZED ROUTES
+router.get("/getDriverDues", getDriverDues);
+
+// generate Invoice
+router.get("/:id/invoice", generateInvoice);
 
 // Get All Orders (Optional: filter by userId)
 router.get("/", getAllOrders);
 
-// Add this new route
-router.get("/:id/invoice", generateInvoice);
+// Get Order by ID - this comes last
+router.get("/:id", getOrderById);
 
-// Change Order status
+// assign Driver To Order
+router.post("/assignDriverToOrder", assignDriverToOrder);
+
+// update Driver Dues Status
+router.put("/updateDriverDuesStatus/:id", updateDriverDuesStatus);
 
 module.exports = router;

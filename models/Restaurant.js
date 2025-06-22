@@ -24,6 +24,19 @@ const RestaurantSchema = new mongoose.Schema(
         },
       },
     ],
+    drivers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User", // Reference to the User model
+        validate: {
+          validator: async function (userId) {
+            const user = await mongoose.model("User").findById(userId);
+            return user && user.role === "3"; // Now checking for role '2' (basic user as manager)
+          },
+          message: "User is not a valid driver or does not exist",
+        },
+      },
+    ],
   },
   { timestamps: true }
 );

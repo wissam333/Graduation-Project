@@ -7,7 +7,7 @@ app.use(express.json());
 const path = require("path");
 const cors = require("cors");
 const port = process.env.PORT || 5000;
-const DB_URI = process.env.DBString;
+const DB_URI = process.env.DBString || "mongodb://0.0.0.0:27017/Restaurant"; //
 
 // importing routes
 const userRoute = require("./routes/user");

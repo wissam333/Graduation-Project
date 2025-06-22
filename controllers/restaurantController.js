@@ -176,6 +176,58 @@ const removeRestaurantFromManager = async (req, res) => {
   }
 };
 
+const removeRestaurantFromDriver = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Find the user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Check if user is actually a driver with restaurant assignment
+    if (user.role !== "3" || !user.restaurantId) {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a manager or has no restaurant assignment",
+      });
+    }
+
+    const restaurantId = user.restaurantId;
+
+    // Remove manager from restaurant's managers array
+    await Restaurant.findByIdAndUpdate(restaurantId, {
+      $pull: { managers: userId },
+    });
+
+    // Update user - remove restaurantId and change role to regular user (1)
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        $unset: { restaurantId: 1 }, // Remove restaurantId field
+        $set: { role: "1" }, // Demote to regular user
+      },
+      { new: true, select: "-password" }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Restaurant assignment removed successfully",
+      data: updatedUser,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to remove restaurant assignment",
+      error: err.message,
+    });
+  }
+};
+
 const assignManagerToRestaurant = async (req, res) => {
   try {
     const { restaurantId, userId } = req.body;
@@ -228,6 +280,79 @@ const assignManagerToRestaurant = async (req, res) => {
       {
         restaurantId: restaurantId,
         role: 2, // Set the user's role to manager
+      },
+      { new: true, select: "-password" }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Manager assigned to restaurant successfully",
+      data: {
+        restaurant: updatedRestaurant,
+        user: updatedUser,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to assign manager to restaurant",
+      error: err.message,
+    });
+  }
+};
+
+const assignDriverToRestaurant = async (req, res) => {
+  try {
+    const { restaurantId, userId } = req.body;
+
+    // Check if both IDs are provided
+    if (!restaurantId || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: "Both restaurantId and userId are required",
+      });
+    }
+
+    // Check if the user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.restaurantId) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already assigned to a restaurant",
+      });
+    }
+
+    // Check if the restaurant exists
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found",
+      });
+    }
+
+    // Update the restaurant to include the manager
+    const updatedRestaurant = await Restaurant.findByIdAndUpdate(
+      restaurantId,
+      {
+        $addToSet: { managers: userId },
+      },
+      { new: true }
+    );
+
+    // Update the user to reference the restaurant and set role to 2 (manager)
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        restaurantId: restaurantId,
+        role: 3, // Set the user's role to manager
       },
       { new: true, select: "-password" }
     );
@@ -334,6 +459,8 @@ module.exports = {
   getAllRestaurants,
   getRestaurant,
   removeRestaurantFromManager,
+  removeRestaurantFromDriver,
   assignManagerToRestaurant,
+  assignDriverToRestaurant,
   addUserAsRestaurantManager,
 };

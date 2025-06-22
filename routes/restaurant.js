@@ -7,7 +7,9 @@ const {
   getAllRestaurants,
   getRestaurant,
   removeRestaurantFromManager,
+  removeRestaurantFromDriver,
   assignManagerToRestaurant,
+  assignDriverToRestaurant,
   addUserAsRestaurantManager,
 } = require("../controllers/restaurantController");
 
@@ -26,14 +28,23 @@ router.get("/", getAllRestaurants);
 // Get single restaurant
 router.get("/:id", getRestaurant);
 
-// Get single restaurant
+// remove Restaurant From Manager
 router.delete(
   "/removeRestaurantFromManager/:userId",
   removeRestaurantFromManager
 );
 
+// remove Restaurant From Driver
+router.delete(
+  "/removeRestaurantFromDriver/:userId",
+  removeRestaurantFromDriver
+);
+
 // Assign Manager To Restaurant
 router.post("/assignManagerToRestaurant", assignManagerToRestaurant);
+
+// Assign Driver To Restaurant
+router.post("/assignDriverToRestaurant", assignDriverToRestaurant);
 
 // Assign Manager To Restaurant
 router.post("/addUserAsRestaurantManager", addUserAsRestaurantManager);

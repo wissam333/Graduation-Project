@@ -4,6 +4,7 @@ const {
   register,
   login,
   registerManager,
+  registerDriver,
 } = require("../controllers/authController");
 
 // register
@@ -14,5 +15,8 @@ router.post("/login", login);
 
 // register
 router.post("/registerManager", registerManager);
+
+// register
+router.post("/registerDriver", registerDriver);
 
 module.exports = router;

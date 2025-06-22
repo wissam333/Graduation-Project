@@ -2,6 +2,8 @@ const Product = require("../models/Product");
 const Settings = require("../models/Settings");
 const User = require("../models/User");
 const Order = require("../models/Order");
+const DriverDues = require("../models/DriverDues");
+const mongoose = require("mongoose");
 
 // Helper to calculate distance between two geo points (in km)
 // Haversine-based
@@ -24,16 +26,25 @@ const getDistanceInKm = (latLng1, latLng2) => {
   return R * c;
 };
 
+// Helper function to generate order group code
+function generateOrderGroupCode() {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substr(2, 5);
+  return `GRP-${timestamp}-${random}`.toUpperCase();
+}
+
 // Add Order
 const addOrder = async (req, res) => {
   try {
-    const { userId, name, email, products, address, location } = req.body; // userCoords = [lng, lat]
-
-    let amount = 0;
-    let deliveryPrice = 0;
-    const enrichedProducts = [];
+    const { userId, name, email, products, address, location } = req.body;
     const settings = await Settings.findOne();
-    const pricePerKm = settings?.pricePerKm || 1.5; // default fallback
+    const pricePerKm = settings?.pricePerKm || 1.5;
+
+    // Generate a unique order group code
+    const orderGroupCode = generateOrderGroupCode(); // You'll need to implement this function
+
+    // Group products by restaurant
+    const productsByRestaurant = {};
 
     for (const item of products) {
       const product = await Product.findById(item.productId).populate(
@@ -45,30 +56,66 @@ const addOrder = async (req, res) => {
           .json({ message: "Product or restaurant not found" });
       }
 
+      const restaurantId = product.restaurantId._id.toString();
+      if (!productsByRestaurant[restaurantId]) {
+        productsByRestaurant[restaurantId] = {
+          products: [],
+          amount: 0,
+          deliveryPrice: 0,
+          restaurantLocation: product.restaurantId.location,
+        };
+      }
+
       const price = product.price * item.quantity;
-      amount += price;
-
-      const distance = getDistanceInKm(location, product.restaurantId.location);
-
-      deliveryPrice += distance * pricePerKm;
-
-      enrichedProducts.push(item);
+      productsByRestaurant[restaurantId].products.push(item);
+      productsByRestaurant[restaurantId].amount += price;
     }
 
-    const newOrder = new Order({
-      userId,
-      name,
-      email,
-      products: enrichedProducts,
-      amount: Math.round(amount + deliveryPrice),
-      address,
-      deliveryPrice: Math.round(deliveryPrice),
-      location: location,
-      status: "Pending",
-    });
+    // Calculate delivery price for each restaurant
+    for (const restaurantId in productsByRestaurant) {
+      const restaurantData = productsByRestaurant[restaurantId];
+      const distance = getDistanceInKm(
+        location,
+        restaurantData.restaurantLocation
+      );
+      restaurantData.deliveryPrice = distance * pricePerKm;
+      restaurantData.totalAmount = Math.round(
+        restaurantData.amount + restaurantData.deliveryPrice
+      );
+    }
 
-    const savedOrder = await newOrder.save();
-    res.status(201).json(savedOrder);
+    // Create orders for each restaurant
+    const orders = [];
+    const restaurantCount = Object.keys(productsByRestaurant).length;
+
+    for (const restaurantId in productsByRestaurant) {
+      const restaurantData = productsByRestaurant[restaurantId];
+
+      const newOrder = new Order({
+        userId,
+        name,
+        email,
+        products: restaurantData.products,
+        restaurantId,
+        amount: restaurantData.totalAmount,
+        address,
+        deliveryPrice: Math.round(restaurantData.deliveryPrice),
+        location: location,
+        status: "Pending",
+        orderGroupCode,
+        isGroupedOrder: restaurantCount > 1, // Mark as grouped if there are multiple restaurants
+      });
+
+      const savedOrder = await newOrder.save();
+      orders.push(savedOrder);
+    }
+
+    res.status(201).json({
+      success: true,
+      orderGroupCode,
+      orders,
+      isGrouped: restaurantCount > 1,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -188,8 +235,11 @@ const getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get the order details by ID
-    const order = await Order.findById(id).populate("location");
+    // Get the order details by ID and populate both location and driver
+    const order = await Order.findById(id)
+      .populate("location")
+      .populate("driverId", "-password -role"); // Assuming driver is a User model
+
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
@@ -223,6 +273,7 @@ const getOrderById = async (req, res) => {
       ...order.toObject(),
       products: populatedProducts,
       user: user || null,
+      // driver will be automatically included from the initial populate
     };
 
     res.status(200).json(transformedOrder);
@@ -231,66 +282,130 @@ const getOrderById = async (req, res) => {
   }
 };
 
-// Get All Orders (Filter by UserId or RestaurantId Optional)
+// Get All Orders (Filter by UserId, RestaurantId, Status, Search with Server-side Pagination)
 const getAllOrders = async (req, res) => {
   try {
-    const { userId, restaurantId } = req.query;
+    const {
+      userId,
+      restaurantId,
+      status,
+      search,
+      page = 1,
+      limit = 10,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
 
-    // Build query based on provided parameters
+    // Build the base query
     const query = {};
+    
+    // Add filters if provided
     if (userId) query.userId = userId;
+    if (status) query.status = status;
+    
+    // Handle restaurant filter
     if (restaurantId) {
-      // First find all products that belong to this restaurant
-      const restaurantProducts = await Product.find({ restaurantId }).select(
-        "_id"
-      );
-      const productIds = restaurantProducts.map((p) => p._id);
-
-      // Then find orders that contain any of these products
+      const productIds = await Product.find({ restaurantId }).distinct('_id');
       query["products.productId"] = { $in: productIds };
     }
 
-    const orders = await Order.find(query).populate("location");
+    // Handle search
+    if (search) {
+      const matchingUsers = await User.find({
+        $or: [
+          { username: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } }
+        ]
+      }).distinct('_id');
+      
+      query.userId = { $in: matchingUsers };
+    }
 
-    // Populate users, products, and restaurants (excluding managers)
-    const populatedOrders = await Promise.all(
-      orders.map(async (order) => {
-        const [user, populatedProducts] = await Promise.all([
-          User.findById(order.userId).select("-password -role"),
-          Promise.all(
-            order.products.map(async (item) => {
-              const product = await Product.findById(item.productId).populate({
-                path: "restaurantId",
-                select: "-managers", // Exclude managers field
-                model: "Restaurant",
-              });
+    // Create sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-              return {
-                ...item.toObject(),
-                product: product
-                  ? {
-                      ...product.toObject(),
-                      restaurant: product.restaurantId,
-                    }
-                  : null,
-              };
-            })
-          ),
-        ]);
+    // Get total count
+    const total = await Order.countDocuments(query);
 
-        return {
-          ...order.toObject(),
-          products: populatedProducts,
-          user: user || null,
-        };
-      })
+    // Calculate pagination
+    const pageInt = parseInt(page);
+    const limitInt = parseInt(limit);
+    const skip = (pageInt - 1) * limitInt;
+    const totalPages = Math.ceil(total / limitInt);
+
+    // Find orders with pagination
+    const orders = await Order.find(query)
+      .sort(sort)
+      .skip(skip)
+      .limit(limitInt)
+      .lean();
+
+    // Get all unique user and product IDs
+    const userIds = [...new Set(orders.map(o => o.userId).filter(Boolean))];
+    const allProductIds = orders.flatMap(o => 
+      o.products.map(p => p.productId).filter(Boolean)
     );
+    const productIds = [...new Set(allProductIds)];
 
-    res.status(200).json(populatedOrders);
+    // Fetch related data
+    const [users, products] = await Promise.all([
+      User.find({ _id: { $in: userIds } }).select('-password -role').lean(),
+      Product.find({ _id: { $in: productIds } })
+        .populate({ path: 'restaurantId', select: '-managers' })
+        .lean()
+    ]);
+
+    // Create lookup maps
+    const userMap = new Map(users.map(u => [u._id.toString(), u]));
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
+
+    // Build response with proper null checks
+    const populatedOrders = orders.map(order => {
+      const populatedProducts = order.products.map(item => {
+        if (!item.productId) {
+          return {
+            ...item,
+            product: null
+          };
+        }
+        
+        const product = productMap.get(item.productId.toString());
+        return {
+          ...item,
+          product: product ? {
+            ...product,
+            restaurant: product.restaurantId
+          } : null
+        };
+      });
+
+      return {
+        ...order,
+        products: populatedProducts,
+        user: order.userId ? userMap.get(order.userId.toString()) || null : null
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: populatedOrders,
+      pagination: {
+        total,
+        page: pageInt,
+        limit: limitInt,
+        totalPages,
+        hasNextPage: pageInt < totalPages,
+        hasPrevPage: pageInt > 1
+      }
+    });
+
   } catch (err) {
+    console.error('Error in getAllOrders:', err);
     res.status(500).json({
+      success: false,
       message: "Error fetching orders",
-      error: err.message,
+      error: err.message
     });
   }
 };
@@ -427,7 +542,7 @@ const generateInvoice = async (req, res) => {
       .text(`Name: ${invoiceData.customer.name}`, 50, 125)
       .font("Arabic")
       .text(`Address: ${invoiceData.customer.address}`, 50, 140)
-      .text(`Email: ${invoiceData.customer.email}`, 50, 155)
+      .text(`Email: ${invoiceData.customer.email}`, 50, 155);
 
     // Items table
     doc.moveTo(50, 200).lineTo(550, 200).stroke();
@@ -529,7 +644,275 @@ const generateInvoice = async (req, res) => {
   }
 };
 
-module.exports = { generateInvoice };
+// Assign Driver to Order
+const assignDriverToOrder = async (req, res) => {
+  try {
+    const { orderId, driverId } = req.body;
+
+    // Validate input
+    if (!orderId || !driverId) {
+      return res
+        .status(400)
+        .json({ message: "Order ID and Driver ID are required" });
+    }
+
+    // Check if driver exists and has role 3
+    const driver = await User.findById(driverId);
+    if (!driver || driver.role != 3) {
+      return res
+        .status(400)
+        .json({ message: "Invalid driver ID or user is not a driver" });
+    }
+
+    // Check if order exists and is in Processing status
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    if (order.status !== "Processing") {
+      return res.status(400).json({
+        message: `Cannot assign driver to order with status: ${order.status}`,
+      });
+    }
+
+    // Get driver percentage from settings
+    const settings = await Settings.findOne();
+    const driverPercentage = settings?.driverPercentage || 20;
+
+    // Calculate driver dues amount (20% of order amount)
+    const driverAmount = (order.deliveryPrice * driverPercentage) / 100;
+
+    // Update order status and assign driver
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      {
+        $set: {
+          status: "Shipping",
+          driverId: driverId,
+        },
+      },
+      { new: true }
+    );
+
+    // Create driver dues record
+    const driverDues = new DriverDues({
+      driverId,
+      amount: driverAmount,
+      orderId,
+      status: "Pending",
+    });
+
+    await driverDues.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Driver assigned successfully",
+      order: updatedOrder,
+      driverDues,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+};
+
+const getDriverDues = async (req, res) => {
+  try {
+    const { driverId, status, orderId, restaurantId } = req.query;
+
+    // Create filter object
+    const filter = {};
+
+    // Validate and add driverId to filter if provided
+    if (driverId) {
+      if (!mongoose.Types.ObjectId.isValid(driverId)) {
+        return res.status(400).json({ message: "Invalid driver ID format" });
+      }
+      filter.driverId = driverId;
+    }
+
+    // Add status to filter if provided
+    if (status) {
+      filter.status = status;
+    }
+
+    // Validate and add orderId to filter if provided
+    if (orderId) {
+      if (!mongoose.Types.ObjectId.isValid(orderId)) {
+        return res.status(400).json({ message: "Invalid order ID format" });
+      }
+      filter.orderId = orderId;
+    }
+
+    // If restaurantId is provided, we need to find drivers belonging to that restaurant first
+    let driverFilter = {};
+    if (restaurantId) {
+      if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid restaurant ID format" });
+      }
+      driverFilter.restaurantId = restaurantId;
+    }
+
+    // Find drivers that match the restaurant filter (if any)
+    const matchingDrivers = restaurantId
+      ? await User.find(driverFilter).select("_id")
+      : null;
+
+    // If restaurant filter was provided, add matching driver IDs to the dues filter
+    if (restaurantId && matchingDrivers) {
+      filter.driverId = { $in: matchingDrivers.map((d) => d._id) };
+    }
+
+    // Find dues with optional filters and populate related data
+    const dues = await DriverDues.find(filter)
+      .populate({
+        path: "driverId",
+        select: "username email role restaurantId",
+        model: "User",
+      })
+      .populate({
+        path: "orderId",
+        select:
+          "name email amount deliveryPrice status address location createdAt",
+        model: "Order",
+        populate: [
+          {
+            path: "products.productId",
+            select: "title price",
+            model: "Product",
+          },
+        ],
+      })
+      .sort({ createdAt: -1 }); // Newest first
+
+    // Get restaurant information for drivers
+    const duesWithRestaurants = await Promise.all(
+      dues.map(async (due) => {
+        let restaurant = null;
+
+        // If driver has a restaurantId, populate it
+        if (due.driverId?.restaurantId) {
+          const restaurantDoc = await mongoose
+            .model("Restaurant")
+            .findById(due.driverId.restaurantId)
+            .select("name");
+          restaurant = restaurantDoc
+            ? {
+                _id: restaurantDoc._id,
+                name: restaurantDoc.name,
+              }
+            : null;
+        }
+
+        return {
+          ...due.toObject(),
+          restaurantInfo: restaurant,
+        };
+      })
+    );
+
+    // Transform the data for consistent response
+    const transformedDues = duesWithRestaurants.map((due) => {
+      const driver = due.driverId
+        ? {
+            _id: due.driverId._id,
+            username: due.driverId.username,
+            email: due.driverId.email,
+            role: due.driverId.role,
+            isDriver: due.driverId.role === "3",
+            restaurantId: due.driverId.restaurantId,
+          }
+        : null;
+
+      const order = due.orderId
+        ? {
+            _id: due.orderId._id,
+            customerName: due.orderId.name,
+            customerEmail: due.orderId.email,
+            amount: due.orderId.amount,
+            deliveryPrice: due.orderId.deliveryPrice,
+            status: due.orderId.status,
+            address: due.orderId.address,
+            location: due.orderId.location,
+            createdAt: due.orderId.createdAt,
+            products: due.orderId.products.map((item) => ({
+              _id: item.productId?._id,
+              title: item.productId?.title,
+              price: item.productId?.price,
+              quantity: item.quantity,
+              total: item.productId ? item.productId.price * item.quantity : 0,
+            })),
+          }
+        : null;
+
+      return {
+        _id: due._id,
+        amount: due.amount,
+        status: due.status,
+        createdAt: due.createdAt,
+        updatedAt: due.updatedAt,
+        driver,
+        order,
+        // Summary fields for easy display
+        summary: {
+          driverName: driver?.username || "Unknown Driver",
+          customerName: order?.customerName || "Unknown Customer",
+          restaurantName: due.restaurantInfo?.name || "Unknown Restaurant",
+          orderAmount: order?.amount || 0,
+          dueAmount: due.amount,
+          status: due.status,
+        },
+      };
+    });
+
+    res.json({
+      success: true,
+      count: transformedDues.length,
+      data: transformedDues,
+    });
+  } catch (error) {
+    console.error("Error in getDriverDues:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to retrieve driver dues",
+      error: error.message,
+    });
+  }
+};
+
+const updateDriverDuesStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate the input
+    if (!status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
+
+    // Check if the dues record exists
+    const dues = await DriverDues.findById(id);
+    if (!dues) {
+      return res.status(404).json({ message: "Driver dues record not found" });
+    }
+
+    // Update the status
+    dues.status = status;
+    await dues.save();
+
+    res.json({
+      message: "Driver dues status updated successfully",
+      updatedDues: dues,
+    });
+  } catch (error) {
+    console.error("Error updating driver dues status:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
 
 module.exports = {
   addOrder,
@@ -538,4 +921,7 @@ module.exports = {
   getOrderById,
   getAllOrders,
   generateInvoice,
+  assignDriverToOrder,
+  getDriverDues,
+  updateDriverDuesStatus,
 };

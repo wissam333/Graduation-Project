@@ -177,11 +177,19 @@ const getProduct = async (req, res) => {
 
 const getProducts = async (req, res) => {
   try {
-    const { categoryId, restaurantId, page = 1, pageSize = 10, latest } = req.query;
-    const skip = (page - 1) * pageSize;
+    const {
+      categoryId,
+      restaurantId,
+      page = 1,
+      pageSize = 10,
+      latest,
+    } = req.query;
+    const numericPage = Math.max(1, parseInt(page));
+    const numericPageSize = Math.min(Math.max(1, parseInt(pageSize)), 100); // Limit pageSize to 100 max
+    const skip = (numericPage - 1) * numericPageSize;
 
     // Build cache key with restaurantId
-    const cacheKey = `products:${categoryId}:${restaurantId}:${page}:${pageSize}:${latest}`;
+    const cacheKey = `products:${categoryId}:${restaurantId}:${numericPage}:${numericPageSize}:${latest}`;
     const cached = cache.get(cacheKey);
     if (cached) return res.status(200).json(cached);
 
@@ -198,7 +206,10 @@ const getProducts = async (req, res) => {
     if (latest) {
       productsQuery = productsQuery.sort({ createdAt: -1 }).limit(5);
     } else {
-      productsQuery = productsQuery.skip(skip).limit(pageSize);
+      productsQuery = productsQuery
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(numericPageSize);
     }
 
     // Execute query
@@ -220,11 +231,17 @@ const getProducts = async (req, res) => {
       if (typeof p.categoryId === "object") delete p.categoryId;
     });
 
-    // Prepare final response
+    // Prepare final response with enhanced pagination info
     const response = {
       products: transformedProducts,
-      totalPages: latest ? 1 : Math.ceil(count / pageSize),
-      productsCount: count,
+      pagination: {
+        totalItems: count,
+        totalPages: latest ? 1 : Math.ceil(count / numericPageSize),
+        currentPage: numericPage,
+        pageSize: latest ? 5 : numericPageSize,
+        hasNextPage: latest ? false : numericPage * numericPageSize < count,
+        hasPreviousPage: latest ? false : numericPage > 1,
+      },
     };
 
     // Cache and respond

@@ -53,6 +53,19 @@ const verifyTokenAndManager = (req, res, next) => {
   });
 };
 
+// Verify token and driver role (only role 3)
+const verifyTokenAndDriver = (req, res, next) => {
+  verifyToken(req, res, () => {
+    if (req.user && req.user.role == 3) {
+      next();
+    } else {
+      return res
+        .status(403)
+        .json({ message: "You are not allowed to do that! Driver only." });
+    }
+  });
+};
+
 // Verify token and either admin or manager role (roles 0 or 2)
 const verifyTokenAndAdminOrManager = (req, res, next) => {
   verifyToken(req, res, () => {
@@ -80,6 +93,7 @@ module.exports = {
   verifyTokenAndAuth,
   verifyTokenAndAdmin,
   verifyTokenAndManager,
+  verifyTokenAndDriver, // Added the new driver verification
   verifyTokenAndAdminOrManager,
   timeReq,
 };

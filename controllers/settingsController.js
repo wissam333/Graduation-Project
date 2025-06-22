@@ -16,13 +16,14 @@ const getSettings = async (req, res) => {
 // Update delivery price per km
 const updateSettings = async (req, res) => {
   try {
-    const { pricePerKm } = req.body;
+    const { pricePerKm, driverPercentage } = req.body;
 
     let settings = await Settings.findOne();
     if (!settings) {
       settings = new Settings({ pricePerKm });
     } else {
       settings.pricePerKm = pricePerKm;
+      settings.driverPercentage = driverPercentage;
     }
 
     const saved = await settings.save();

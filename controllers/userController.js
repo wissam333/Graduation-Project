@@ -18,14 +18,6 @@ const updateUser = async (req, res) => {
       });
     }
 
-    // Authorization check
-    if (requestingUser.role !== "0" && requestingUser._id.toString() !== id) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update your own profile",
-      });
-    }
-
     // Handle password update
     if (updates.password) {
       updates.password = CryptoJS.AES.encrypt(
@@ -36,11 +28,11 @@ const updateUser = async (req, res) => {
 
     // Handle restaurant assignment changes
     if (updates.restaurantId !== undefined) {
-      // Only admin can change restaurant assignments
-      if (requestingUser.role !== "0") {
+      // Only admin and manager can change restaurant assignments
+      if (requestingUser.role !== "0" || requestingUser.role !== "2") {
         return res.status(403).json({
           success: false,
-          message: "Only admin can change restaurant assignments",
+          message: "Only admin % manager can change restaurant assignments",
         });
       }
 
@@ -147,7 +139,7 @@ const getUser = async (req, res) => {
 };
 
 const getUsers = async (req, res) => {
-  const { new: isNew, restaurantId, search } = req.query; // Added search parameter
+  const { new: isNew, restaurantId, search, role } = req.query;
 
   try {
     let users;
@@ -156,6 +148,11 @@ const getUsers = async (req, res) => {
     // Add restaurantId filter if provided
     if (restaurantId) {
       query.restaurantId = restaurantId;
+    }
+
+    // Add role filter if provided
+    if (role) {
+      query.role = role;
     }
 
     // Add search filter if provided
@@ -181,10 +178,10 @@ const getUsers = async (req, res) => {
       users = await User.find(query).select("-password");
     }
 
-    // For managers, populate their restaurant information
+    // For all users with restaurantId, populate their restaurant information
     const usersWithRestaurants = await Promise.all(
       users.map(async (user) => {
-        if (user.role === "2" && user.restaurantId) {
+        if (user.restaurantId) {
           const restaurant = await Restaurant.findById(user.restaurantId);
           return {
             ...user._doc,

@@ -3,7 +3,7 @@ const router = require("express").Router();
 const {
   verifyTokenAndAdmin,
   verifyTokenAndAuth,
-  verifyTokenAndManager,
+  verifyTokenAndAdminOrManager,
 } = require("../Middleware/verifyToken");
 const {
   updateUser,
@@ -14,7 +14,7 @@ const {
 } = require("../controllers/userController");
 
 // update user
-router.put("/:id", verifyTokenAndAuth, updateUser);
+router.put("/:id", verifyTokenAndAdminOrManager, updateUser);
 
 // delete user
 router.delete("/:id", deleteUser);

@@ -30,10 +30,15 @@ const OrderSchema = new mongoose.Schema(
         },
       },
     ],
+    restaurantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Restaurant",
+      required: true,
+    },
     amount: {
       type: Number,
       required: true,
-      immutable: true, // can be set programmatically
+      immutable: true,
     },
     address: {
       type: String,
@@ -50,12 +55,28 @@ const OrderSchema = new mongoose.Schema(
     deliveryPrice: {
       type: Number,
       required: true,
-      immutable: true, // can be set programmatically
+      immutable: true,
+    },
+    orderGroupCode: {
+      type: String,
+      required: true,
+      index: true, // Add index for faster queries
+      default: null,
+    },
+    isGroupedOrder: {
+      type: Boolean,
+      default: false,
+    },
+    driverId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      required: false,
     },
   },
   { timestamps: true }
 );
 
-// Create a 2dsphere index on the location field to support geospatial queries
 OrderSchema.index({ location: "2dsphere" });
+OrderSchema.index({ orderGroupCode: 1 }); // Index for orderGroupCode
 module.exports = mongoose.model("Order", OrderSchema);
