@@ -14,6 +14,8 @@ const {
   assignDriverToOrder,
   getDriverDues,
   updateDriverDuesStatus,
+  suggestOrderGroupings,
+  assignDriverToGroup,
 } = require("../controllers/orderController");
 
 // Add Order
@@ -30,6 +32,12 @@ router.get("/getDriverDues", getDriverDues);
 
 // generate Invoice
 router.get("/:id/invoice", generateInvoice);
+
+// suggest Order Groupings
+router.get("/suggestOrderGroupings", suggestOrderGroupings);
+
+// assign Driver To Group
+router.post("/assignDriverToGroup", assignDriverToGroup);
 
 // Get All Orders (Optional: filter by userId)
 router.get("/", getAllOrders);

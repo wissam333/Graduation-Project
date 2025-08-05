@@ -4,6 +4,7 @@ const User = require("../models/User");
 const Order = require("../models/Order");
 const DriverDues = require("../models/DriverDues");
 const mongoose = require("mongoose");
+const Restaurant = require("../models/Restaurant");
 
 // Helper to calculate distance between two geo points (in km)
 // Haversine-based
@@ -298,14 +299,14 @@ const getAllOrders = async (req, res) => {
 
     // Build the base query
     const query = {};
-    
+
     // Add filters if provided
     if (userId) query.userId = userId;
     if (status) query.status = status;
-    
+
     // Handle restaurant filter
     if (restaurantId) {
-      const productIds = await Product.find({ restaurantId }).distinct('_id');
+      const productIds = await Product.find({ restaurantId }).distinct("_id");
       query["products.productId"] = { $in: productIds };
     }
 
@@ -313,11 +314,11 @@ const getAllOrders = async (req, res) => {
     if (search) {
       const matchingUsers = await User.find({
         $or: [
-          { username: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } }
-        ]
-      }).distinct('_id');
-      
+          { username: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ],
+      }).distinct("_id");
+
       query.userId = { $in: matchingUsers };
     }
 
@@ -342,48 +343,54 @@ const getAllOrders = async (req, res) => {
       .lean();
 
     // Get all unique user and product IDs
-    const userIds = [...new Set(orders.map(o => o.userId).filter(Boolean))];
-    const allProductIds = orders.flatMap(o => 
-      o.products.map(p => p.productId).filter(Boolean)
+    const userIds = [...new Set(orders.map((o) => o.userId).filter(Boolean))];
+    const allProductIds = orders.flatMap((o) =>
+      o.products.map((p) => p.productId).filter(Boolean)
     );
     const productIds = [...new Set(allProductIds)];
 
     // Fetch related data
     const [users, products] = await Promise.all([
-      User.find({ _id: { $in: userIds } }).select('-password -role').lean(),
+      User.find({ _id: { $in: userIds } })
+        .select("-password -role")
+        .lean(),
       Product.find({ _id: { $in: productIds } })
-        .populate({ path: 'restaurantId', select: '-managers' })
-        .lean()
+        .populate({ path: "restaurantId", select: "-managers" })
+        .lean(),
     ]);
 
     // Create lookup maps
-    const userMap = new Map(users.map(u => [u._id.toString(), u]));
-    const productMap = new Map(products.map(p => [p._id.toString(), p]));
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
     // Build response with proper null checks
-    const populatedOrders = orders.map(order => {
-      const populatedProducts = order.products.map(item => {
+    const populatedOrders = orders.map((order) => {
+      const populatedProducts = order.products.map((item) => {
         if (!item.productId) {
           return {
             ...item,
-            product: null
+            product: null,
           };
         }
-        
+
         const product = productMap.get(item.productId.toString());
         return {
           ...item,
-          product: product ? {
-            ...product,
-            restaurant: product.restaurantId
-          } : null
+          product: product
+            ? {
+                ...product,
+                restaurant: product.restaurantId,
+              }
+            : null,
         };
       });
 
       return {
         ...order,
         products: populatedProducts,
-        user: order.userId ? userMap.get(order.userId.toString()) || null : null
+        user: order.userId
+          ? userMap.get(order.userId.toString()) || null
+          : null,
       };
     });
 
@@ -396,16 +403,15 @@ const getAllOrders = async (req, res) => {
         limit: limitInt,
         totalPages,
         hasNextPage: pageInt < totalPages,
-        hasPrevPage: pageInt > 1
-      }
+        hasPrevPage: pageInt > 1,
+      },
     });
-
   } catch (err) {
-    console.error('Error in getAllOrders:', err);
+    console.error("Error in getAllOrders:", err);
     res.status(500).json({
       success: false,
       message: "Error fetching orders",
-      error: err.message
+      error: err.message,
     });
   }
 };
@@ -914,6 +920,295 @@ const updateDriverDuesStatus = async (req, res) => {
   }
 };
 
+// ========================================================
+// TSP Algorthim !
+// ========================================================
+const suggestOrderGroupings = async (req, res) => {
+  try {
+    const { restaurantId, maxGroupSize = 3, maxDistanceKm = 5 } = req.query;
+
+    // validate restaurantId
+    if (!restaurantId || !mongoose.Types.ObjectId.isValid(restaurantId)) {
+      return res
+        .status(400)
+        .json({ message: "Valid Restaurant ID is required" });
+    }
+
+    // get restaurant with location validation
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (
+      !restaurant ||
+      !Array.isArray(restaurant.location) ||
+      restaurant.location.length !== 2
+    ) {
+      return res
+        .status(404)
+        .json({ message: "Restaurant not found or has invalid location" });
+    }
+    const restaurantCoords = restaurant.location; // [lng, lat]
+
+    // Get processing orders with driver validation
+    const processingOrders = await Order.find({
+      restaurantId: restaurant._id,
+      status: "Processing",
+      $or: [{ driverId: { $exists: false } }, { driverId: null }],
+    })
+      .populate("userId", "-password -role")
+      .populate({
+        path: "products.productId",
+        populate: [
+          { path: "restaurantId", select: "-managers" },
+          { path: "categoryId" },
+        ],
+      });
+
+    //  location validation
+    const validOrders = processingOrders.filter(
+      (order) =>
+        Array.isArray(order.location) &&
+        order.location.length === 2 &&
+        !isNaN(order.location[0]) &&
+        !isNaN(order.location[1])
+    );
+
+    if (validOrders.length === 0) {
+      return res.status(200).json({
+        message: "No valid orders to group",
+        debug: {
+          totalOrders: processingOrders.length,
+          invalidLocations: processingOrders.length - validOrders.length,
+        },
+        groupings: [],
+      });
+    }
+
+    // add distance calculations
+    const ordersWithDistance = validOrders.map((order) => {
+      const distance = getDistanceInKm(restaurantCoords, order.location);
+      return {
+        ...order.toObject(),
+        coords: order.location,
+        distanceFromRestaurant: distance,
+      };
+    });
+
+    // SIMPLE GRID CLUSTERING
+    const gridSize = maxDistanceKm / 2;
+    const clusters = new Map();
+
+    // 1° latitude ≈ 111 km at equator
+    // 1° longitude ≈ 111 km × cos(latitude)
+    ordersWithDistance.forEach((order) => {
+      const [lng, lat] = order.coords;
+      const gridX = Math.floor(lng / gridSize);
+      const gridY = Math.floor(lat / gridSize);
+      const gridKey = `${gridX},${gridY}`;
+
+      if (!clusters.has(gridKey)) clusters.set(gridKey, []);
+      clusters.get(gridKey).push(order);
+    });
+
+    const result = Array.from(clusters.values()).flatMap((cluster) => {
+      // Sort by distance from restaurant
+      cluster.sort(
+        (a, b) => a.distanceFromRestaurant - b.distanceFromRestaurant
+      );
+
+      const groups = [];
+      while (cluster.length > 0) {
+        // get the maxGroupSize(3) nearest orders
+        const group = cluster.splice(0, maxGroupSize);
+
+        // TSP // if there is only 1 order no TSP nedded
+        if (group.length > 1) {
+          let currentLocation = restaurantCoords;
+          const route = [];
+          let remaining = [...group];
+
+          while (remaining.length > 0) {
+            let nearestIndex = 0;
+            let minDistance = Infinity;
+
+            for (let i = 0; i < remaining.length; i++) {
+              const dist = getDistanceInKm(
+                currentLocation,
+                remaining[i].coords
+              );
+              if (dist < minDistance) {
+                minDistance = dist;
+                nearestIndex = i;
+              }
+            }
+
+            route.push(remaining[nearestIndex]);
+            currentLocation = remaining[nearestIndex].coords;
+            remaining.splice(nearestIndex, 1);
+          }
+          groups.push(route);
+        } else {
+          groups.push(group);
+        }
+      }
+
+      // calculate route data
+      return groups.map((group) => {
+        let totalDistance = 0;
+        let current = restaurantCoords;
+        const path = [];
+
+        group.forEach((order) => {
+          const dist = getDistanceInKm(current, order.coords);
+          totalDistance += dist;
+
+          const { userId, ...orderData } = order;
+          const safeUser = userId
+            ? {
+                _id: userId._id,
+                username: userId.username,
+                email: userId.email,
+              }
+            : null;
+
+          path.push({
+            order: { ...orderData, userId: safeUser },
+            distanceFromPrev: `${dist.toFixed(2)} km`,
+          });
+          current = order.coords;
+        });
+
+        // return trip
+        totalDistance += getDistanceInKm(current, restaurantCoords);
+
+        return {
+          orders: path,
+          totalOrders: group.length,
+          totalDistance: `${totalDistance.toFixed(2)} km`,
+          estimatedDeliveryTime: `${Math.round(totalDistance * 3)} mins`,
+        };
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      restaurant: {
+        _id: restaurant._id,
+        name: restaurant.name,
+        location: restaurantCoords,
+      },
+      groupings: result,
+      stats: {
+        totalOrders: processingOrders.length,
+        validOrders: validOrders.length,
+        totalGroups: result.length,
+      },
+    });
+  } catch (err) {
+    console.error("Grouping error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
+    });
+  }
+};
+
+const assignDriverToGroup = async (req, res) => {
+  try {
+    const { orderIds, driverId } = req.body;
+
+    // 1. Basic validation
+    if (!Array.isArray(orderIds)) {
+      return res.status(400).json({ message: "orderIds must be an array" });
+    }
+    if (!driverId) {
+      return res.status(400).json({ message: "driverId is required" });
+    }
+
+    // 2. Verify driver exists and is a driver (role 3)
+    const driver = await User.findOne({ _id: driverId, role: "3" });
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    // 3. Get settings for driver percentage
+    const settings = await Settings.findOne();
+    const driverPercentage = settings?.driverPercentage || 20;
+
+    // 4. Find all valid processing orders
+    const orders = await Order.find({
+      _id: { $in: orderIds },
+      status: "Processing",
+      $or: [{ driverId: { $exists: false } }, { driverId: null }],
+    });
+
+    // 5. Check if all orders were found and are valid
+    if (orders.length !== orderIds.length) {
+      const invalidOrders = orderIds.filter(
+        (id) => !orders.some((order) => order._id.equals(id))
+      );
+      return res.status(400).json({
+        message: "Some orders cannot be assigned",
+        invalidOrders,
+      });
+    }
+
+    // 6. Verify all orders belong to the same restaurant
+    const restaurantId = orders[0].restaurantId;
+    const sameRestaurant = orders.every((order) =>
+      order.restaurantId.equals(restaurantId)
+    );
+    if (!sameRestaurant) {
+      return res.status(400).json({
+        message: "All orders must be from the same restaurant",
+      });
+    }
+
+    // 7. Update orders and create driver dues
+    const updateOps = orders.map((order) => ({
+      updateOne: {
+        filter: { _id: order._id },
+        update: {
+          $set: {
+            status: "Shipping",
+            driverId: driver._id,
+          },
+        },
+      },
+    }));
+
+    const dueDocs = orders.map((order) => ({
+      driverId: driver._id,
+      orderId: order._id,
+      amount: (order.deliveryPrice * driverPercentage) / 100,
+      status: "Pending",
+    }));
+
+    // Execute all operations in bulk
+    await Order.bulkWrite(updateOps);
+    await DriverDues.insertMany(dueDocs);
+
+    // 8. Return success response
+    res.json({
+      success: true,
+      message: `Driver assigned to ${orders.length} orders`,
+      driver: {
+        _id: driver._id,
+        name: driver.username,
+      },
+      restaurant: {
+        _id: restaurantId,
+      },
+    });
+  } catch (err) {
+    console.error("Assignment error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to assign driver",
+      error: err.message,
+    });
+  }
+};
+
 module.exports = {
   addOrder,
   updateOrder,
@@ -924,4 +1219,6 @@ module.exports = {
   assignDriverToOrder,
   getDriverDues,
   updateDriverDuesStatus,
+  suggestOrderGroupings,
+  assignDriverToGroup,
 };

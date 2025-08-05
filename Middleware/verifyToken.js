@@ -30,7 +30,7 @@ const verifyTokenAndAuth = (req, res, next) => {
 // Verify token and admin role (only role 0)
 const verifyTokenAndAdmin = (req, res, next) => {
   verifyToken(req, res, () => {
-    if (req.user && req.user.role == 0) {
+    if (req.user && (req.user.role == 0 || req.user.role == 0)) {
       next();
     } else {
       return res
@@ -43,7 +43,7 @@ const verifyTokenAndAdmin = (req, res, next) => {
 // Verify token and manager role (only role 2)
 const verifyTokenAndManager = (req, res, next) => {
   verifyToken(req, res, () => {
-    if (req.user && req.user.role == 2) {
+    if (req.user && (req.user.role == 2 || req.user.role == 0)) {
       next();
     } else {
       return res
@@ -56,7 +56,7 @@ const verifyTokenAndManager = (req, res, next) => {
 // Verify token and driver role (only role 3)
 const verifyTokenAndDriver = (req, res, next) => {
   verifyToken(req, res, () => {
-    if (req.user && req.user.role == 3) {
+    if (req.user && (req.user.role == 3 || req.user.role == 0)) {
       next();
     } else {
       return res

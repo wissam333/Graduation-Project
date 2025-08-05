@@ -7,7 +7,6 @@ const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-    const requestingUser = req.user;
 
     // Find the user to be updated
     const userToUpdate = await User.findById(id);
@@ -28,14 +27,6 @@ const updateUser = async (req, res) => {
 
     // Handle restaurant assignment changes
     if (updates.restaurantId !== undefined) {
-      // Only admin and manager can change restaurant assignments
-      if (requestingUser.role !== "0" || requestingUser.role !== "2") {
-        return res.status(403).json({
-          success: false,
-          message: "Only admin % manager can change restaurant assignments",
-        });
-      }
-
       // Clear restaurant assignment if null/empty is passed
       if (!updates.restaurantId) {
         // Remove from old restaurant if exists

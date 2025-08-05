@@ -25,7 +25,7 @@ const updateSettings = async (req, res) => {
       settings.pricePerKm = pricePerKm;
       settings.driverPercentage = driverPercentage;
     }
-
+    
     const saved = await settings.save();
     res.status(200).json(saved);
   } catch (err) {

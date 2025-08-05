@@ -78,5 +78,4 @@ const OrderSchema = new mongoose.Schema(
 );
 
 OrderSchema.index({ location: "2dsphere" });
-OrderSchema.index({ orderGroupCode: 1 }); // Index for orderGroupCode
 module.exports = mongoose.model("Order", OrderSchema);

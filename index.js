@@ -7,14 +7,13 @@ app.use(express.json());
 const path = require("path");
 const cors = require("cors");
 const port = process.env.PORT || 5000;
-const DB_URI = process.env.DBString || "mongodb://0.0.0.0:27017/Restaurant"; //
+const DB_URI = process.env.DBString || "mongodb://0.0.0.0:27017/Restaurant"; //  process.env.DBString ||
 
 // importing routes
 const userRoute = require("./routes/user");
 const authRoute = require("./routes/auth");
 const productRoute = require("./routes/product");
 const orderRoute = require("./routes/order");
-const favoriteRoute = require("./routes/favorite");
 const dashboard = require("./routes/dashboard");
 const recommendations = require("./routes/recommendations");
 const restaurant = require("./routes/restaurant");
@@ -45,7 +44,6 @@ app.use("/api/auth", authRoute);
 app.use("/api/users", userRoute);
 app.use("/api/products", productRoute);
 app.use("/api/orders", orderRoute);
-app.use("/api/favorite", favoriteRoute);
 app.use("/api/dashboard", dashboard);
 app.use("/api/recommendations", recommendations);
 app.use("/api/restaurant", restaurant);
