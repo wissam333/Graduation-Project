@@ -933,7 +933,6 @@ const suggestOrderGroupings = async (req, res) => {
         .status(400)
         .json({ message: "Valid Restaurant ID is required" });
     }
-
     // get restaurant with location validation
     const restaurant = await Restaurant.findById(restaurantId);
     if (
@@ -970,7 +969,6 @@ const suggestOrderGroupings = async (req, res) => {
         !isNaN(order.location[0]) &&
         !isNaN(order.location[1])
     );
-
     if (validOrders.length === 0) {
       return res.status(200).json({
         message: "No valid orders to group",
@@ -993,7 +991,7 @@ const suggestOrderGroupings = async (req, res) => {
     });
 
     // SIMPLE GRID CLUSTERING
-    const gridSize = maxDistanceKm / 2;
+    const gridSize = maxDistanceKm / Math.sqrt(2);
     const clusters = new Map();
 
     // 1° latitude ≈ 111 km at equator
@@ -1088,6 +1086,7 @@ const suggestOrderGroupings = async (req, res) => {
       });
     });
 
+    // adjusting responce
     res.status(200).json({
       success: true,
       restaurant: {
@@ -1209,6 +1208,178 @@ const assignDriverToGroup = async (req, res) => {
   }
 };
 
+// =========================================================
+// K-Means
+// =========================================================
+const suggestOrderGroupingsWithKmeans = async (req, res) => {
+  try {
+    const { restaurantId, maxGroupSize = 3, maxDistanceKm = 5 } = req.query;
+
+    // 1. Validate restaurantId — O(1)
+    if (!restaurantId || !mongoose.Types.ObjectId.isValid(restaurantId)) {
+      return res
+        .status(400)
+        .json({ message: "Valid Restaurant ID is required" });
+    }
+
+    // 2. Fetch restaurant — O(1) (indexed query)
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant?.location?.length === 2) {
+      return res
+        .status(404)
+        .json({ message: "Restaurant not found or invalid location" });
+    }
+    const restaurantCoords = restaurant.location; // [lng, lat]
+
+    // 3. Fetch processing orders — O(n) (n = orders)
+    const processingOrders = await Order.find({
+      restaurantId: restaurant._id,
+      status: "Processing",
+      $or: [{ driverId: { $exists: false } }, { driverId: null }],
+    }).populate("userId", "-password -role");
+
+    // 4. Filter valid orders — O(n)
+    const validOrders = processingOrders.filter(
+      (order) => Array.isArray(order.location) && order.location.length === 2
+    );
+
+    if (validOrders.length === 0) {
+      return res
+        .status(200)
+        .json({ message: "No valid orders to group", groupings: [] });
+    }
+
+    // 5. Add distance from restaurant — O(n)
+    const ordersWithDistance = validOrders.map((order) => ({
+      ...order.toObject(),
+      coords: order.location,
+      distanceFromRestaurant: getDistanceInKm(restaurantCoords, order.location),
+    }));
+
+    // 6. K-Means Clustering — O(n × k × i)
+    // (k = clusters, i = iterations ≈ 10)
+    const k = Math.ceil(validOrders.length / maxGroupSize); // Dynamic 'k'
+    const clusters = kMeansClustering(ordersWithDistance, k);
+
+    // 7. Apply Nearest Neighbor TSP per cluster — O(m²) per cluster
+    // (m = orders per cluster, worst-case: O(n²) if all orders in one cluster)
+    const groupings = clusters.flatMap((cluster) => {
+      if (cluster.length <= maxGroupSize) return [cluster]; // No TSP needed
+      return solveTSPNearestNeighbor(cluster, restaurantCoords, maxGroupSize);
+    });
+
+    // 8. Calculate route metrics — O(g × m) (g = groups, m = maxGroupSize)
+    const result = groupings.map((group) =>
+      calculateRouteMetrics(group, restaurantCoords)
+    );
+
+    res.status(200).json({
+      success: true,
+      restaurant: { _id: restaurant._id, name: restaurant.name },
+      groupings: result,
+      stats: {
+        totalOrders: processingOrders.length,
+        validOrders: validOrders.length,
+      },
+    });
+  } catch (err) {
+    console.error("Grouping error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// K-Means Clustering — O(n × k × i)
+function kMeansClustering(orders, k = 3, maxIterations = 10) {
+  // Initialize centroids randomly
+  let centroids = orders.slice(0, k).map((order) => [...order.coords]);
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    const clusters = Array(k)
+      .fill()
+      .map(() => []);
+
+    // Assign each order to nearest centroid — O(n × k)
+    orders.forEach((order) => {
+      let nearestCentroidIdx = 0;
+      let minDist = Infinity;
+      centroids.forEach((centroid, i) => {
+        const dist = getDistanceInKm(centroid, order.coords);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestCentroidIdx = i;
+        }
+      });
+      clusters[nearestCentroidIdx].push(order);
+    });
+
+    // Update centroids — O(k × m) (m = avg cluster size)
+    let converged = true;
+    centroids = clusters.map((cluster) => {
+      if (cluster.length === 0) return centroids[Math.floor(Math.random() * k)]; // Handle empty clusters
+      const newCentroid = [
+        cluster.reduce((sum, o) => sum + o.coords[0], 0) / cluster.length,
+        cluster.reduce((sum, o) => sum + o.coords[1], 0) / cluster.length,
+      ];
+      if (
+        getDistanceInKm(newCentroid, centroids[clusters.indexOf(cluster)]) >
+        0.01
+      )
+        converged = false;
+      return newCentroid;
+    });
+
+    if (converged) break;
+  }
+  return clusters;
+}
+
+// Nearest Neighbor TSP — O(m²) per cluster
+function solveTSPNearestNeighbor(cluster, start, maxGroupSize) {
+  const groups = [];
+  let remaining = [...cluster];
+
+  while (remaining.length > 0) {
+    let current = start;
+    const group = [];
+    for (let i = 0; i < Math.min(maxGroupSize, remaining.length); i++) {
+      let nearestIdx = 0;
+      let minDist = Infinity;
+      remaining.forEach((order, j) => {
+        const dist = getDistanceInKm(current, order.coords);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestIdx = j;
+        }
+      });
+      group.push(remaining[nearestIdx]);
+      current = remaining[nearestIdx].coords;
+      remaining.splice(nearestIdx, 1);
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
+// Calculate Route Metrics — O(m) per group
+function calculateRouteMetrics(group, restaurantCoords) {
+  let totalDistance = 0;
+  let current = restaurantCoords;
+  const path = [];
+
+  group.forEach((order) => {
+    const dist = getDistanceInKm(current, order.coords);
+    totalDistance += dist;
+    path.push({ order, distanceFromPrev: `${dist.toFixed(2)} km` });
+    current = order.coords;
+  });
+
+  totalDistance += getDistanceInKm(current, restaurantCoords); // Return trip
+  return {
+    orders: path,
+    totalDistance: `${totalDistance.toFixed(2)} km`,
+    estimatedDeliveryTime: `${Math.round(totalDistance * 3)} mins`,
+  };
+}
 module.exports = {
   addOrder,
   updateOrder,
